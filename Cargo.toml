@@ -1,5 +1,5 @@
 [package]
-name = "rust-plurk-oauth"
+name = "rpoaurk"
 version = "0.1.0"
 authors = ["Dephilia <me@dephilia.moe>"]
 edition = "2018"

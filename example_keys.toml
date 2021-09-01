@@ -1,0 +1,7 @@
+[client]
+key = "your_key"
+secret = "your_client_secret"
+
+[token]
+key = ""
+secret = ""

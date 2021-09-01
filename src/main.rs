@@ -1,7 +1,9 @@
 mod plurk;
+mod comet;
 
-use plurk::{Plurk, PlurkError, Value};
-use std::collections::BTreeMap;
+use plurk::{Plurk, PlurkError};
+use comet::{PlurkComet};
+use std::collections::BTreeSet;
 
 fn main() -> Result<(), PlurkError> {
     let file_name = "keys.toml";
@@ -12,28 +14,32 @@ fn main() -> Result<(), PlurkError> {
 
     plurk.print();
 
-    let res: Value = plurk.request("/APP/Users/me", None, None)?;
+    let res = plurk.request("/APP/Users/me", None, None)?;
 
     plurk::print_user(res);
 
-    // let res: Value = plurk.request("/APP/Realtime/getUserChannel", None, None)?;
+    let res = plurk.request("/APP/Realtime/getUserChannel", None, None)?;
 
-    // println!("comet_server: {}", res["comet_server"]);
-    // println!("channel_name: {}", res["channel_name"]);
+    let mut comet = PlurkComet::new(res["comet_server"].as_str().unwrap())?;
+    comet.print();
 
-    // let v: Value = plurk.request("/APP/Profile/getOwnProfile", None, None)?;
-    // println!("{:?}", v);
+    let res = comet.call_once_mut()?;
+    println!("{:?}", res);
 
-    // let mut data: BTreeMap<String, String> = BTreeMap::new();
-    // data.insert("content".to_string(), "This plurk is send from rust 🦀.".to_string());
-    // data.insert("qualifier".to_string(), "says".to_string());
-    // let v: Value = plurk.request("/APP/Timeline/plurkAdd", Some(data), None)?;
-    // println!("{:?}", v);
 
-    // let mut file: BTreeMap<String, String> = BTreeMap::new();
-    // file.insert("image".to_string(), "/Users/dephilia/Pictures/datas/vTuber/Ee2tEXoU8AABOjk.jpeg".to_string());
-    // let v: Value = plurk.request("/APP/Timeline/uploadPicture", None, Some(file))?;
-    // println!("{:?}", v);
+    // let res = plurk.request("/APP/Profile/getOwnProfile", None, None)?;
+    // println!("{:?}", res);
+
+    // let mut data: BTreeSet<(&str, &str)> = BTreeSet::new();
+    // data.insert(("content", "This plurk is send from rust 🦀."));
+    // data.insert(("qualifier", "says"));
+    // let res = plurk.request("/APP/Timeline/plurkAdd", Some(data), None)?;
+    // println!("{:?}", res);
+
+    // let mut file: BTreeSet<(&str, &str)> = BTreeSet::new();
+    // file.insert(("image", "/Users/dephilia/Pictures/datas/vTuber/Ee2tEXoU8AABOjk.jpeg"));
+    // let res = plurk.request("/APP/Timeline/uploadPicture", None, Some(file))?;
+    // println!("{:?}", res);
 
     Ok(())
 }

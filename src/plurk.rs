@@ -5,7 +5,7 @@ use reqwest::Url;
 use serde::{Deserialize, Serialize};
 pub use serde_json::Value;
 use serde_qs as qs;
-use std::collections::BTreeMap;
+use std::collections::BTreeSet;
 use std::fmt;
 use std::fs;
 use std::io::prelude::*;
@@ -28,12 +28,22 @@ pub struct Plurk {
     token: String,
     token_secret: String,
     authed: bool,
+    rc: Client,
 }
 
 #[derive(Serialize, Deserialize)]
 pub struct PlurkError {
     code: usize,
     message: String,
+}
+
+impl PlurkError {
+    pub fn new(code: usize, message: String) -> PlurkError {
+        PlurkError {
+            code: code,
+            message: message
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize)]
@@ -77,6 +87,7 @@ impl Plurk {
                 token: _t,
                 token_secret: _ts,
                 authed: true,
+                rc: Client::new(),
             },
             (_, _) => Plurk {
                 client: c.to_string(),
@@ -84,6 +95,7 @@ impl Plurk {
                 token: "".to_string(),
                 token_secret: "".to_string(),
                 authed: false,
+                rc: Client::new(),
             },
         }
     }
@@ -124,6 +136,7 @@ impl Plurk {
             token: keys.token.key,
             token_secret: keys.token.secret,
             authed: !authed,
+            rc: Client::new(),
         })
     }
     pub fn is_authed(&self) -> bool {
@@ -192,8 +205,9 @@ impl Plurk {
             &self.token_secret,
         );
         let authorization_header = oauth::post(REQUEST_TOKEN_URL, &(), &token, oauth::HmacSha1);
-        let client = Client::new();
-        let res = match client
+        // let client = Client::new();
+        let res = match self
+            .rc
             .post(REQUEST_TOKEN_URL)
             .header("Authorization", authorization_header)
             .send()
@@ -233,6 +247,7 @@ impl Plurk {
             token: tokens.oauth_token,
             token_secret: tokens.oauth_token_secret,
             authed: false,
+            rc: self.rc,
         })
     }
 
@@ -256,8 +271,8 @@ impl Plurk {
             .verifier(verifier.as_str())
             .post(ACCESS_TOKEN_URL, &());
 
-        let client = Client::new();
-        let res = match client
+        let res = match self
+            .rc
             .post(ACCESS_TOKEN_URL)
             .header("Authorization", authorization_header)
             .send()
@@ -297,14 +312,15 @@ impl Plurk {
             token: tokens.oauth_token,
             token_secret: tokens.oauth_token_secret,
             authed: true,
+            rc: self.rc,
         })
     }
 
     pub fn request(
         &self,
         api: &str,
-        data: Option<BTreeMap<String, String>>,
-        file: Option<BTreeMap<String, String>>,
+        data: Option<BTreeSet<(&str, &str)>>,
+        file: Option<BTreeSet<(&str, &str)>>,
     ) -> Result<Value, PlurkError> {
         // if self.authed == false {
         //     return Err(PlurkError{
@@ -312,9 +328,12 @@ impl Plurk {
         //         message: "Oauth not authed".to_string()
         //     });
         // }
-        let client = oauth::Credentials::new(self.client.as_str(), self.client_secret.as_str());
-        let token = oauth::Credentials::new(self.token.as_str(), self.token_secret.as_str());
-        let options = auth::Options::new();
+        let token = oauth::Token::from_parts(
+            &self.client,
+            &self.client_secret,
+            &self.token,
+            &self.token_secret,
+        );
 
         let base = match Url::parse(BASE_URL) {
             Ok(t) => t,
@@ -335,44 +354,32 @@ impl Plurk {
             }
         };
 
-        let mut serializer = HmacSha1Authorizer::new("POST", &url, client, Some(token), &options);
-
-        if let Some(mut d_before) = data.clone() {
-            let d_after = d_before.split_off("oauth_");
-            for (name, value) in d_before {
-                serializer.serialize_parameter(name.as_str(), value.as_str());
-            }
-            serializer.serialize_oauth_parameters();
-            for (name, value) in d_after {
-                serializer.serialize_parameter(name.as_str(), value.as_str());
-            }
-        } else {
-            serializer.serialize_oauth_parameters();
-        }
-        let authorization_header = serializer.end();
-
-        let client = Client::new();
         let mut form = multipart::Form::new();
 
-        let pre_send = match (&data, &file) {
-            (Some(d), None) => client
-                .post(url)
-                .header("Authorization", authorization_header)
-                .form(&d),
-            (None, Some(f)) => {
-                for (name, value) in f.clone() {
-                    form = form.file(name, value).unwrap();
-                }
-
-                client
-                    .post(url)
-                    .header("Authorization", authorization_header)
-                    .multipart(form)
+        if let Some(f) = &file {
+            for (name, value) in f {
+                form = match form.file(name.to_string(), value.to_string()) {
+                    Ok(t) => t,
+                    Err(e) => {
+                        return Err(PlurkError {
+                            code: 1,
+                            message: e.to_string(),
+                        })
+                    }
+                };
             }
-            (_, _) => client
-                .post(url)
-                .header("Authorization", authorization_header),
+        }
+        let authorization_header = match &data {
+            Some(d) => oauth::post(&url, &d.clone(), &token, oauth::HmacSha1),
+            _ => oauth::post(&url, &(), &token, oauth::HmacSha1),
         };
+
+        let pre_send = self
+            .rc
+            .post(url)
+            .header("Authorization", authorization_header)
+            .form(&data)
+            .multipart(form);
 
         let res = match pre_send.send() {
             Ok(t) => t,
@@ -407,9 +414,7 @@ impl Plurk {
 }
 
 pub fn print_user(user: Value) {
-    //{"display_name": "Alexey", "is_channel": 0, "nick_name": "Scoundrel", "has_profile_image": 1, "location": "Canada", "date_of_birth": "Sat, 19 Mar 1983 00:00:00 GMT", "relationship": "not_saying", "avatar": 3, "full_name": "Alexey Kovyrin", "gender": 1, "recruited": 6, "id": 5, "karma": 33.5}
-
-    println!("{}",               "=".repeat(40));
+    println!("{}", "=".repeat(40));
     println!("Display name: {}", user["display_name"]);
     println!("Is channel:   {}", user["is_channel"]);
     println!("Nick name:    {}", user["nick_name"]);
@@ -423,6 +428,5 @@ pub fn print_user(user: Value) {
     println!("Recruited:    {}", user["recruited"]);
     println!("Id:           {}", user["id"]);
     println!("Karma:        {}", user["karma"]);
-    println!("{}",               "=".repeat(40));
-
+    println!("{}", "=".repeat(40));
 }
